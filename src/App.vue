@@ -19,7 +19,6 @@
             >
             <div class="mt-1 relative rounded-md shadow-md">
               <input
-                  @input="setSuggestions(); isAdded=false"
                   v-model="ticker"
                   type="text"
                   name="wallet"
@@ -61,14 +60,14 @@
           </svg>
           Добавить
         </button>
-        <label class="block text-sm font-medium text-gray-700">Фильтр <input v-model="filter"/></label>
+        <label class="block text-sm font-medium text-gray-700">Фильтр <input v-model="filter" @input="currentPage = 1"/></label>
         <button v-if="currentPage > 1"
-                @click="currentPage -= 1"
+                @click="currentPage = currentPage - 1"
                 class="my-4 mx-4 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500">
           Назад
         </button>
         <button v-if="hasNextPage"
-                @click="currentPage += 1"
+                @click="currentPage = currentPage + 1"
                 class="my-4 mx-4 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500">
           Вперед
         </button>
@@ -76,10 +75,10 @@
 
       <hr v-if="tickers.length" class="w-full border-t border-gray-600 my-4"/>
       <dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
-        <div v-for="e in filterTickers()" v-bind:key="e.currency"
+        <div v-for="e in paginatedTickers" :key="e.currency"
              @click="selectTicker(e)"
              :class="{
-              'border-4': selected === e
+              'border-4': selectedTicker === e
             }"
              class="bg-white overflow-hidden shadow rounded-lg border-purple-800 border-solid cursor-pointer border-width 5"
         >
@@ -115,20 +114,20 @@
       </dl>
       <template v-if="tickers.length">
         <hr class="w-full border-t border-gray-600 my-4"/>
-        <section v-if="selected" class="relative" id="graph">
+        <section v-if="selectedTicker" class="relative" id="graph">
           <h3 class="text-lg leading-6 font-medium text-gray-900 my-8">
-            {{ selected.currency }} - USD
+            {{ selectedTicker.currency }} - USD
           </h3>
           <div class="flex items-end border-gray-600 border-b border-l h-64">
             <div
-                v-for="(bar, idx) in normalizeGraph()"
+                v-for="(bar, idx) in normalizedGraph"
                 :key="idx"
                 :style="{ height: `${bar}%` }"
                 class="bg-purple-800 border w-10"
             ></div>
           </div>
           <button
-              @click="selected = null"
+              @click="selectedTicker = null"
               type="button"
               class="absolute top-0 right-0"
           >
@@ -163,24 +162,90 @@
 <script>
 export default {
   name: 'App',
-  metaInfo: {
-    title: 'cryptonomicon'
-  },
   data() {
     return {
       ticker: '',
       tickers: [],
-      selected: null,
+      selectedTicker: null,
       graph: [],
       isAdded: false,
-      suggestions: [],
       coins: [],
       isSpinnerShown: true,
       filter: "",
       currentPage: 1,
-      hasNextPage: false
     }
   },
+  computed: {
+    normalizedGraph: function () {
+      const maxValue = Math.max(...this.graph);
+      const minValue = Math.min(...this.graph);
+
+      if (maxValue === minValue) {
+        return this.graph.map(() => 50);
+      }
+
+      return this.graph.map(
+          price => 5 + ((price - minValue) * 95) / (maxValue - minValue)
+      )
+
+    },
+    suggestions: function () {
+      if (this.ticker !== '') {
+        return this.coins.filter(e => e.includes(this.ticker.toUpperCase())).slice(0, 4)
+      } else {
+        return []
+      }
+    }
+    ,
+    start: function () {
+      return (this.currentPage - 1) * 6
+    },
+    end: function () {
+      return this.currentPage * 6
+    },
+    filteredTickers: function () {
+      return this.tickers.filter(ticker =>
+          ticker.currency.includes(this.filter) || ticker.currency.includes(this.filter.toUpperCase())
+      )
+    },
+    paginatedTickers: function () {
+      return this.filteredTickers.slice(this.start, this.end)
+    },
+    hasNextPage: function () {
+      return this.filteredTickers.length > this.end
+    },
+    pageStateOptions() {
+      return {
+        filter: this.filter,
+        page: this.currentPage
+      }
+    }
+
+  },
+  watch: {
+    selectedTicker: function () {
+      this.graph = []
+    }
+    ,
+    tickers: function () {
+      localStorage.setItem('cryptonomicon-tickers', JSON.stringify(this.tickers))
+      this.ticker = ''
+    }
+    ,
+    ticker: function () {
+      this.isAdded = false
+    }
+    ,
+    pageStateOptions: function (value) {
+      window.history.pushState(
+          null,
+          document.title,
+          `${window.location.pathname}?filter=${value.filter}&page=${value.page}`
+      );
+    }
+
+  }
+  ,
   methods: {
     addTicker() {
       if (!this.tickers.map(t => t.currency.toUpperCase()).includes(this.ticker.toUpperCase())) {
@@ -190,26 +255,11 @@ export default {
           interval: null
         }
         this.tickers.push(currentTicker);
-        localStorage.setItem('cryptonomicon-tickers', JSON.stringify(this.tickers))
         this.setUpdate(currentTicker)
-        this.ticker = ''
-        this.suggestions = []
         this.isAdded = false
       } else {
         this.isAdded = true;
       }
-    },
-    filterTickers() {
-      const start = (this.currentPage - 1) * 6;
-      const end = this.currentPage * 6;
-
-      const filteredTickers = this.tickers.filter(ticker =>
-          ticker.currency.includes(this.filter) || ticker.currency.includes(this.filter.toUpperCase())
-      );
-
-      this.hasNextPage = filteredTickers.length > end;
-
-      return filteredTickers.slice(start, end);
     },
     setUpdate(ticker) {
       const apiKey = '52df426ebf62f9e36a4e2f254bc31404c2586d0dfc84212437908846426d5c2b'
@@ -223,7 +273,7 @@ export default {
                 clearInterval(interval)
               } else {
                 usd = data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2)
-                if (this.selected?.currency === ticker.currency) {
+                if (this.selectedTicker?.currency === ticker.currency) {
                   this.graph.push(data.USD);
                 }
               }
@@ -231,32 +281,29 @@ export default {
             })
       }, 5000)
       ticker.interval = interval
-    },
+    }
+    ,
     removeTicker(el) {
+      if (el === this.selectedTicker) {
+        this.selectedTicker = null
+        this.graph = []
+      }
       clearInterval(this.tickers.find(e => e === el).interval)
       this.tickers = this.tickers.filter(e => el !== e)
-      localStorage.setItem('cryptonomicon-tickers', JSON.stringify(this.tickers))
-    },
+    }
+    ,
     selectTicker(ticker) {
-      this.selected = ticker;
-      this.graph = [];
-    },
-    normalizeGraph() {
-      const maxValue = Math.max(...this.graph);
-      const minValue = Math.min(...this.graph);
-      return this.graph.map(
-          price => 5 + ((price - minValue) * 95) / (maxValue - minValue)
-      )
-    },
-    setSuggestions() {
-      if (this.ticker !== '') {
-        this.suggestions = this.coins.filter(e => e.includes(this.ticker.toUpperCase())).slice(0, 4)
-      } else {
-        this.suggestions = []
-      }
+      this.selectedTicker = ticker;
     }
   },
   created() {
+    const searchParams = Object.fromEntries(new URL(location).searchParams.entries())
+    if (searchParams.filter) {
+      this.filter = searchParams.filter
+    }
+    if (searchParams.page) {
+      this.currentPage = +searchParams.page
+    }
     this.tickers = JSON.parse(localStorage.getItem('cryptonomicon-tickers'))
     this.tickers.forEach(e => this.setUpdate(e))
     fetch("https://min-api.cryptocompare.com/data/all/coinlist?summary=true")
@@ -270,6 +317,8 @@ export default {
     this.isSpinnerShown = false;
   }
 }
+
+
 </script>
 
 <style src="./app.css"></style>
